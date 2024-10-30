@@ -25,6 +25,10 @@ import cv2
 import os
 import matplotlib.pyplot as plt
 import io
+import psutil
+from scipy.interpolate import interp1d
+
+
 class TensorRTInference:
     def __init__(self, engine_path,dataset_path,export_data_path,input_shape,output_shape,gray):
         self.logger = trt.Logger(trt.Logger.ERROR)
@@ -117,13 +121,53 @@ class TensorRTInference:
 
         return images
 
+
+    def image_handling_new(self):
+
+        #virtual_memory = psutil.virtual_memory()/(1024**2)
+        #print(f"Available memory: {virtual_memory.available} MB")
+
+
+        buffer_limit_kb=512000 #KB that is 500 MB
+
+        lst = os.listdir(self.dataset_path)
+        lst.sort()
+        images = []
+        total_buffer_size = 0
+        image_sizes=[]
+
+        for image_file in lst:
+            if image_file.lower().endswith((".jpg", ".jpeg", ".png", ".webp")):
+                image_path = os.path.join(self.dataset_path, image_file)
+
+                # Get image size in KB before reading
+                image_size_kb = os.path.getsize(image_path) / 1024
+
+                # Check if adding this image would exceed the buffer limit
+                if total_buffer_size + image_size_kb > buffer_limit_kb:
+                    break
+
+                # Read the image into a buffer
+                with open(image_path, "rb") as f:
+                    image_buffer = f.read()
+
+                images.append(image_buffer)
+                image_sizes.append(image_size_kb)    
+                total_buffer_size += image_size_kb
+
+
+        return images,image_sizes
+
+
+
     def inference_over_dataset(self):
         """
         This method runs the inference over the whole dataset
         and exports the output to the disc
         """
         print("Running the inference_over_dataset")
-        images=self.image_handling()
+        images_names=self.image_handling()
+        images,image_sizes=self.image_handling_new()
 
         infer_time_lst=[]
         preprocess_time_lst=[]
@@ -137,17 +181,23 @@ class TensorRTInference:
         #quality default is set
         quality=20
         data_limit=610 #KB, 5Megabits to (5000000/8) makes 625000 Bytes to (625000 Bytes to 1024 ) makes 610 Kilo bytes
+        cr=1 #compression ratio
+        q_cr=[]
+
+        func=self.interpolation()
 
 
-        for image in images:
+        for image_buffer,image in zip(images,images_names):
 
             start_=time.time()
             
             start=time.time()
-            image_path=os.path.join(self.dataset_path,image)
+            #image_path=os.path.join(self.dataset_path,image)
             #image_=self.preprocess_image_cv(image_path) # preprocess for the gray image
             #image_=self.preprocess_image(image_path)
-            image_=self.preprocess_gray_1(image_path)
+            #image_=self.preprocess_gray_1(image_path)
+            image_,image_size=self.preprocess_gray_2(image_buffer)
+            print("image_size:",image_size,'kb')
             #image_=self.preprocess_trt_gray(image_path)
             #image_=self.preprocess_image_cv(image_path)
 
@@ -158,6 +208,7 @@ class TensorRTInference:
             #print("image_ type:",type(image_),"shape:",image_.shape)
             preprocess_time=round(end-start,2)
             print("preprocess is done for:",image,"time:",preprocess_time,"seconds")
+            #print("preprocess_time:",preprocess_time,"seconds")
             preprocess_time_lst.append(preprocess_time)
 
             #run inference
@@ -174,27 +225,46 @@ class TensorRTInference:
             infer_time_lst.append(infer_time)
 
             #post processing the image
+
             export_path=os.path.join(self.export_data_path,image.split('.')[0]+".jpg")
             #self.postprocess_and_save_new(output_data,export_path)
             img_size=self.postprocess_gray_final(output_data,export_path,quality)
 
+            cr=image_size/img_size
+            print("cr:",cr)
+
+            q_cr.append([quality,cr])
             print("Image size is:",img_size,"KB")
+
+            quality_p=self.predict_quality(func,cr)
 
             if img_size<data_limit/3:
                 print("less size, quality ---->")
-                quality-=10
+                if quality<=0 or quality>=100:
+                    quality=20 #reset the quality
+                else:
+                    #quality-=10
+                    quality=int(quality_p)
             elif img_size>data_limit/3:
                 print("large size, quality <-----")
-                quality-=10
+                if quality<=0 or quality>=100:
+                    quality=20 #reset the quality
+                else:
+                    #quality+=10
+                    quality=int(quality_p)
 
             #self.postprocess_new(output_data)
             #self.postprocess_and_save(output_data,export_path)
             print("Done for :",image)
+            #print("done for image:")
             #print("exporting done for :",image)
 
             end_=time.time()
             overall_time=round(end_-start_,2)
             overall_time_lst.append(overall_time)
+
+            print()
+            print()
 
         infer_time_lst=np.array(infer_time_lst)
         overall_time_lst=np.array(overall_time_lst)
@@ -205,8 +275,36 @@ class TensorRTInference:
         print("While exporting the image to the Disc:")
         print("Achievable FPS is:",round(1/overall_time_lst.mean(),3),"for image of resolution:",self.input_shape)
 
-         
+        return q_cr
     
+
+    def interpolation(self):
+        """
+        Predicts the quality parameter for a given compression ratio using linear interpolation.
+
+        Parameters:
+        - cr_quality_list (list of lists): Each sublist contains [compression_ratio, quality].
+        - compression_ratio (float): The compression ratio for which to predict the quality.
+
+        Returns:
+        - float: Predicted quality parameter for the given compression ratio.
+        """
+        lst=[[20, 34.63568500964802], [30, 24.349364403400482], [40, 21.162171747047232], [50, 20.633406127272565], [60, 17.53398510436261], [70, 14.55416511433995], [80, 12.022131920890997], [90, 8.659526166080093], [100, 3.4892211255202947], [20, 33.04553986311718], [30, 27.158581293807583], [40, 23.40763350055925], [50, 20.319682410326806], [60, 17.553763925649715], [70, 15.765351583913354], [80, 12.926830368246558], [90, 8.613280404432256], [100, 3.133166741241566], [20, 27.794104358136607], [30, 20.98784838959118], [40, 17.687530691648096], [50, 17.326776401564537], [60, 19.236378090117146], [70, 21.875603027263825], [80, 17.90297534247896], [90, 12.111852060759892], [100, 3.3522314402602706], [20, 39.10710593598556], [10, 51.74336295521868], [0, 62.42266541443382], [20, 34.74493135935397], [10, 45.237370982629855], [0, 60.378235132767635], [20, 25.917986009457444], [30, 20.14321401586702], [40, 17.514484827298457], [50, 15.95948117108403], [60, 14.746405064757088], [70, 13.095871490731918], [80, 10.82824812667919], [90, 7.582286260448281], [100, 2.975061152099848], [20, 26.21815411846842], [30, 21.639160609987215], [40, 18.86625813262258], [50, 17.078397235696723], [60, 15.710535706320531], [70, 13.502844741109001], [80, 10.945850036639511], [90, 7.683995892140365]]
+        # Extract compression ratios and qualities from the list
+        cr_values = [item[0] for item in lst]
+        quality_values = [item[1] for item in lst]
+
+        # Create interpolation function
+        interp_func = interp1d(cr_values, quality_values, kind='linear', fill_value="extrapolate")
+
+        # Predict quality for the given compression ratio
+        #predicted_quality = interp_func(compression_ratio)
+
+        return interp_func
+
+    def predict_quality(self,interp_func,compression_ratio):
+
+        return interp_func(compression_ratio)
 
     def postprocess_new(self,image):
         print("image type:",type(image),"size of array:",image.shape)
@@ -299,6 +397,25 @@ class TensorRTInference:
 
         # Flatten and return
         return img_final.ravel()
+
+    def preprocess_gray_2(self,image_buffer):
+        """
+            this function is the modified version of the preprocess_gray_1 where the images are
+            read from the buffer object instead of the path"""
+
+        height,width=self.input_shape[1],self.input_shape[2]
+
+        image_size_kb=len(image_buffer)/1024 #get the image size in KB
+        
+        image = Image.open(io.BytesIO(image_buffer)).resize((width, height)).convert("L")
+        image = np.array(image) / 255.0
+
+        # Stack the grayscale image into the first channel of a blank 3D array
+        img_final = np.zeros((1, 3, height, width), dtype=np.float32)
+        img_final[0, 0, :, :] = image
+
+        # Flatten and return
+        return img_final.ravel(),image_size_kb
 
     def postprocess_gray_final(self,output,output_path,quality):
         """

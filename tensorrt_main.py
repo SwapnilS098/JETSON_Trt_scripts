@@ -79,7 +79,8 @@ def trt_main(onnx_model_name,onnx_path_base,engine_path_base,input_shape,output_
     #instantiating the TensorRTInference class
     trt_inference=TensorRTInference(engine_path,dataset_path,export_data_path,input_shape,output_shape,gray) #output_path is the image output path
 
-    trt_inference.inference_over_dataset()
+    q_cr=trt_inference.inference_over_dataset()
+    print("quality cr list:",q_cr)
     
 
 
