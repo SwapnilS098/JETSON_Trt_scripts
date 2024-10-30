@@ -24,7 +24,7 @@ import time
 import cv2
 import os
 import matplotlib.pyplot as plt
-
+import io
 class TensorRTInference:
     def __init__(self, engine_path,dataset_path,export_data_path,input_shape,output_shape,gray):
         self.logger = trt.Logger(trt.Logger.ERROR)
@@ -132,6 +132,13 @@ class TensorRTInference:
         #print()
         print()
         #print("NOT SAVING THE PROCESSED IMAGE FOR NOW")
+
+
+        #quality default is set
+        quality=20
+        data_limit=610 #KB, 5Megabits to (5000000/8) makes 625000 Bytes to (625000 Bytes to 1024 ) makes 610 Kilo bytes
+
+
         for image in images:
 
             start_=time.time()
@@ -141,6 +148,7 @@ class TensorRTInference:
             #image_=self.preprocess_image_cv(image_path) # preprocess for the gray image
             #image_=self.preprocess_image(image_path)
             image_=self.preprocess_gray_1(image_path)
+            #image_=self.preprocess_trt_gray(image_path)
             #image_=self.preprocess_image_cv(image_path)
 
             print("Input image is:",np.array(image_).shape)
@@ -168,7 +176,17 @@ class TensorRTInference:
             #post processing the image
             export_path=os.path.join(self.export_data_path,image.split('.')[0]+".jpg")
             #self.postprocess_and_save_new(output_data,export_path)
-            self.postprocess_gray_final(output_data,export_path)
+            img_size=self.postprocess_gray_final(output_data,export_path,quality)
+
+            print("Image size is:",img_size,"KB")
+
+            if img_size<data_limit/3:
+                print("less size, quality ---->")
+                quality-=10
+            elif img_size>data_limit/3:
+                print("large size, quality <-----")
+                quality-=10
+
             #self.postprocess_new(output_data)
             #self.postprocess_and_save(output_data,export_path)
             print("Done for :",image)
@@ -282,12 +300,17 @@ class TensorRTInference:
         # Flatten and return
         return img_final.ravel()
 
-    def postprocess_gray_final(self,output,output_path):
+    def postprocess_gray_final(self,output,output_path,quality):
         """
             This is the function for the postprocessing and the saving 
             of the image in the gray form which is of the 3 channel.
             The results will be in the 3 channel with the first channel contains the 
-            data and the rest of them will have be zero"""
+            data and the rest of them will have be zero
+        
+            also this function will export the image to the buffer and then the calculation will be made from it
+
+
+            """
         
         height=self.output_shape[1]
         width=self.output_shape[2]
@@ -298,30 +321,38 @@ class TensorRTInference:
         #denormalization and the datatype to integer type
         output=(output*255.0).astype(np.uint8)
 
-        #then clip the output
-        #output=np.clip(output,0,1)
-
         output=output.reshape(3,height,width)
-
-        #print("type:",output,"shape:",output.shape)
-
-        #now the data must be present in the first channel only 
-        #lets copy the data of the first channel in the other two channels and 
-        #then export the image to the disc
-
-        #output[:,:,1]=output[:,:,0]
-        #output[:,:,2]=output[:,:,0]
-        #print("final image shape :",output.shape)
 
         image=output[0]
         
-        #output=np.transpose(output,(1,2,0))
-
-        image=Image.fromarray(image,mode='L')
-        image.save(output_path,format="JPEG",quality=30)
-        print("image is exported")
         
+        image=Image.fromarray(image,mode='L')
+        
+        #stopping for now
+        #start=time.time()
+        #image.save(output_path,format="JPEG",quality=quality)
+        #end=time.time()
+        #export_time=round(end-start,3)
+        #print("disc export time:",export_time)
 
+        #save the image to the memory buffer
+
+        #start=time.time()
+        buffer=io.BytesIO()
+        image.save(buffer,format="JPEG",quality=quality)
+        #end=time.time()
+        #export_time=round(end-start,3)
+        #print("buffer export time:",export_time)
+
+
+        #print("image is exported")
+
+        #get the size of the buffer
+        buffer_size=len(buffer.getvalue())/1024 #in KB
+        buffer.seek(0)
+
+        
+        return buffer_size
 
 
 
