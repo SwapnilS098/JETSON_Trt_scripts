@@ -239,7 +239,7 @@ class TensorRTInference:
             q_cr.append([quality,cr])
             #print("Image size is:",img_size,"KB")
 
-            quality_p=int(self.predict_quality(model,cr))
+            quality_p=int(self.predict_quality(model,image_size,cr))
             print("Predicted quality is:",quality_p)
             #quality is updated now
             quality=quality_p
@@ -285,9 +285,9 @@ class TensorRTInference:
         return q_cr
     
 
-    def predict_quality(self,model,compression_ratio):
+    def predict_quality(self,model,input_size,compression_ratio):
 
-        return q_fun.predict_quality(model,compression_ratio)
+        return q_fun.predict_quality(model,input_size,compression_ratio)
 
     def postprocess_new(self,image):
         print("image type:",type(image),"size of array:",image.shape)
