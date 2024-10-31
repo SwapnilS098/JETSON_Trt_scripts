@@ -27,7 +27,7 @@ import matplotlib.pyplot as plt
 import io
 import psutil
 from scipy.interpolate import interp1d
-
+import quality_cr_function as q_fun
 
 class TensorRTInference:
     def __init__(self, engine_path,dataset_path,export_data_path,input_shape,output_shape,gray):
@@ -183,8 +183,11 @@ class TensorRTInference:
         data_limit=610 #KB, 5Megabits to (5000000/8) makes 625000 Bytes to (625000 Bytes to 1024 ) makes 610 Kilo bytes
         cr=1 #compression ratio
         q_cr=[]
+        
+        desired_size=200  #size of the image in KB for the required FPS
 
-        func=self.interpolation()
+        print("Working on the Regression model for quality and cr")
+        model=q_fun.load_or_build_model(self.dataset_path)
 
 
         for image_buffer,image in zip(images,images_names):
@@ -197,7 +200,7 @@ class TensorRTInference:
             #image_=self.preprocess_image(image_path)
             #image_=self.preprocess_gray_1(image_path)
             image_,image_size=self.preprocess_gray_2(image_buffer)
-            print("image_size:",image_size,'kb')
+            print("image_size:",image_size,'KB')
             #image_=self.preprocess_trt_gray(image_path)
             #image_=self.preprocess_image_cv(image_path)
 
@@ -230,28 +233,32 @@ class TensorRTInference:
             #self.postprocess_and_save_new(output_data,export_path)
             img_size=self.postprocess_gray_final(output_data,export_path,quality)
 
-            cr=image_size/img_size
+            cr=image_size/desired_size
             print("cr:",cr)
 
             q_cr.append([quality,cr])
-            print("Image size is:",img_size,"KB")
+            #print("Image size is:",img_size,"KB")
 
-            quality_p=self.predict_quality(func,cr)
+            quality_p=int(self.predict_quality(model,cr))
+            print("Predicted quality is:",quality_p)
+            #quality is updated now
+            quality=quality_p
 
-            if img_size<data_limit/3:
-                print("less size, quality ---->")
-                if quality<=0 or quality>=100:
-                    quality=20 #reset the quality
-                else:
+
+            #if img_size<data_limit/3:
+            #    print("less size, quality ---->")
+            #    if quality<=0 or quality>=100:
+            #        quality=20 #reset the quality
+            #    else:
                     #quality-=10
-                    quality=int(quality_p)
-            elif img_size>data_limit/3:
-                print("large size, quality <-----")
-                if quality<=0 or quality>=100:
-                    quality=20 #reset the quality
-                else:
-                    #quality+=10
-                    quality=int(quality_p)
+            #        quality=int(quality_p)
+            #elif img_size>data_limit/3:
+            #    print("large size, quality <-----")
+            #    if quality<=0 or quality>=100:
+            #        quality=20 #reset the quality
+            #    else:
+            #        #quality+=10
+            #        quality=int(quality_p)
 
             #self.postprocess_new(output_data)
             #self.postprocess_and_save(output_data,export_path)
@@ -278,33 +285,9 @@ class TensorRTInference:
         return q_cr
     
 
-    def interpolation(self):
-        """
-        Predicts the quality parameter for a given compression ratio using linear interpolation.
+    def predict_quality(self,model,compression_ratio):
 
-        Parameters:
-        - cr_quality_list (list of lists): Each sublist contains [compression_ratio, quality].
-        - compression_ratio (float): The compression ratio for which to predict the quality.
-
-        Returns:
-        - float: Predicted quality parameter for the given compression ratio.
-        """
-        lst=[[20, 34.63568500964802], [30, 24.349364403400482], [40, 21.162171747047232], [50, 20.633406127272565], [60, 17.53398510436261], [70, 14.55416511433995], [80, 12.022131920890997], [90, 8.659526166080093], [100, 3.4892211255202947], [20, 33.04553986311718], [30, 27.158581293807583], [40, 23.40763350055925], [50, 20.319682410326806], [60, 17.553763925649715], [70, 15.765351583913354], [80, 12.926830368246558], [90, 8.613280404432256], [100, 3.133166741241566], [20, 27.794104358136607], [30, 20.98784838959118], [40, 17.687530691648096], [50, 17.326776401564537], [60, 19.236378090117146], [70, 21.875603027263825], [80, 17.90297534247896], [90, 12.111852060759892], [100, 3.3522314402602706], [20, 39.10710593598556], [10, 51.74336295521868], [0, 62.42266541443382], [20, 34.74493135935397], [10, 45.237370982629855], [0, 60.378235132767635], [20, 25.917986009457444], [30, 20.14321401586702], [40, 17.514484827298457], [50, 15.95948117108403], [60, 14.746405064757088], [70, 13.095871490731918], [80, 10.82824812667919], [90, 7.582286260448281], [100, 2.975061152099848], [20, 26.21815411846842], [30, 21.639160609987215], [40, 18.86625813262258], [50, 17.078397235696723], [60, 15.710535706320531], [70, 13.502844741109001], [80, 10.945850036639511], [90, 7.683995892140365]]
-        # Extract compression ratios and qualities from the list
-        cr_values = [item[0] for item in lst]
-        quality_values = [item[1] for item in lst]
-
-        # Create interpolation function
-        interp_func = interp1d(cr_values, quality_values, kind='linear', fill_value="extrapolate")
-
-        # Predict quality for the given compression ratio
-        #predicted_quality = interp_func(compression_ratio)
-
-        return interp_func
-
-    def predict_quality(self,interp_func,compression_ratio):
-
-        return interp_func(compression_ratio)
+        return q_fun.predict_quality(model,compression_ratio)
 
     def postprocess_new(self,image):
         print("image type:",type(image),"size of array:",image.shape)
@@ -446,11 +429,12 @@ class TensorRTInference:
         image=Image.fromarray(image,mode='L')
         
         #stopping for now
-        #start=time.time()
-        #image.save(output_path,format="JPEG",quality=quality)
-        #end=time.time()
-        #export_time=round(end-start,3)
-        #print("disc export time:",export_time)
+        start=time.time()
+        print("quality using for exporting to disc:",quality)
+        image.save(output_path,format="JPEG",quality=quality)
+        end=time.time()
+        export_time=round(end-start,3)
+        print("disc export time:",export_time)
 
         #save the image to the memory buffer
 
@@ -467,6 +451,7 @@ class TensorRTInference:
         #get the size of the buffer
         buffer_size=len(buffer.getvalue())/1024 #in KB
         buffer.seek(0)
+        print("exported_image_size in buffer form is:",buffer_size,"KB")
 
         
         return buffer_size
