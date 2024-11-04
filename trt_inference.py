@@ -283,6 +283,9 @@ class TensorRTInference:
         print("Achievable FPS is:",round(1/overall_time_lst.mean(),3),"for image of resolution:",self.input_shape)
 
         return q_cr
+
+
+
     
 
     def predict_quality(self,model,input_size,compression_ratio):

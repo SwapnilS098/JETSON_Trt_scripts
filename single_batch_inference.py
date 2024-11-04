@@ -18,95 +18,179 @@ print(trt.__version__)
 import numpy as np
 import pycuda.driver as cuda
 import pycuda.autoinit
-import torch
 from PIL import Image
 import time
-import cv2
 import os
-import onnx
+import pillow_avif
 
 
-from build_engine import Build_engine
-print("Build_engine class is imported")
+class Inference:
+    def __init__(self,engine_path,input_shape,output_shape,image_buffer):
+        self.logger=trt.Logger(trt.Logger.ERROR)
+        self.runtime=trt.Runtime(self.logger)
+        self.engine=self.load_engine(engine_path)
+        self.context=self.engine.create_execution_context()
+        self.input_shape=input_shape
+        self.output_shape=output_shape
+        self.input_buffer_image=image_buffer
+
+        #allocate Buffers
+        self.inputs,self.outputs,self.bindings,self.stream=self.allocate_buffers(self.engine)
+
+    def load_engine(self,engine_path):
+        with open(engine_path,"rb") as f:
+            engine=self.runtime.deserialize_cuda_engine(f.read())
+        return engine
+
+    class HostDeviceMem:
+        def __init__(self,host_mem,device_mem):
+            self.host=host_mem
+            self.device=device_mem
+
+    def allocate_buffers(self,engine):
+        inputs,outputs,bindings=[],[],[]
+        stream=cuda.Stream()
+
+        for i in range(engine.num_io_tensors):
+            tensor_name=engine.get_tensor_name(i)
+            size=trt.volume(engine.get_tensor_shape(tensor_name))
+            dtype=trt.nptype(engine.get_tensor_dtype(tensor_name))
+
+            #Allocate host and device buffers
+            host_mem=cuda.pagelocked_empty(size,dtype)
+            device_mem=cuda.mem_alloc(host_mem.nbytes)
+
+            #append the device buffer address to device bindings
+            bindings.append(int(device_mem))
+
+            #append to the appropriate input/output_lists
+            if engine.get_tensor_mode(tensor_name)==trt.TensorIOMode.INPUT:
+                inputs.append(self.HostDeviceMem(host_mem,device_mem))
+            else:
+                outputs.append(self.HostDeviceMem(host_mem,device_mem))
+
+        return inputs,outputs,bindings,stream
+
+    def infer(self, input_data):
+        input_data = input_data.astype(np.float32)  # Ensure the data type matches
+        expected_shape = self.inputs[0].host.shape
+        print(f"Input data shape: {input_data.shape}, Expected shape: {expected_shape}")
+
+        # Check if the shape of input_data matches expected shape
+        if input_data.size != np.prod(expected_shape):
+            raise ValueError(f"Input data size mismatch: {input_data.size} vs {np.prod(expected_shape)}")
+
+        np.copyto(self.inputs[0].host, input_data.ravel())
+        cuda.memcpy_htod_async(self.inputs[0].device, self.inputs[0].host, self.stream)
+
+        # Set tensor address
+        for i in range(self.engine.num_io_tensors):
+            self.context.set_tensor_address(self.engine.get_tensor_name(i), self.bindings[i])
+
+        # Run inference
+        self.context.execute_async_v3(stream_handle=self.stream.handle)
+
+        # Transfer predictions back
+        cuda.memcpy_dtoh_async(self.outputs[1].host, self.outputs[1].device, self.stream)
+
+        # Synchronize the stream
+        self.stream.synchronize()
+
+        #output_tensor = self.outputs[0].host.reshape(input_data.shape)
+        #changing the outputs[0] to outputs[1]
+        #print("size of the array from the infer function:",self.outputs[1].host.shape)
+        #return output_tensor
+        return self.outputs[1].host
+
+    
+
+    def preprocess_gray_2(self,image_buffer):
+        """
+            this function is the modified version of the preprocess_gray_1 where the images are
+            read from the buffer object instead of the path"""
+
+        height,width=self.input_shape[1],self.input_shape[2]
+
+        image_size_kb=len(image_buffer)/1024 #get the image size in KB
+
+        image = Image.open(io.BytesIO(image_buffer)).resize((width, height)).convert("L")
+        image = np.array(image) / 255.0
+
+        # Stack the grayscale image into the first channel of a blank 3D array
+        img_final = np.zeros((1, 3, height, width), dtype=np.float32)
+        img_final[0, 0, :, :] = image
+
+        # Flatten and return
+        return img_final.ravel(),image_size_kb
+    
+    def postprocess_gray_final(self,output,quality):
+        """
+            This is the function for the postprocessing and the saving
+            of the image in the gray form which is of the 3 channel.
+
+            The results will be in the 3 channel with the first channel contains the
+            data and the rest of them will have be zero
+
+            also this function will export the image to the buffer and then the calculation will be made from it
 
 
-from trt_inference import TensorRTInference
-print("TensorRTInference class is imported")
+            """
+
+        height=self.output_shape[1]
+        width=self.output_shape[2]
+
+        #clip the output
+        output=np.clip(output,0,1)
+
+        #denormalization and the datatype to integer type
+        output=(output*255.0).astype(np.uint8)
+
+        output=output.reshape(3,height,width)
+
+        image=output[0]
 
 
+        image=Image.fromarray(image,mode='L')
 
-def trt_main(onnx_model_name,onnx_path_base,engine_path_base,input_shape,output_shape,dataset_path,export_data_path,engine_name):
+        #save the image to the memory buffer
 
-    #final onnx model path
-    onnx_path=os.path.join(onnx_path_base,onnx_model_name+".onnx")
+        buffer=io.BytesIO()
+        image.save(buffer,format="AVIF",quality=quality)
 
-    #final engine model path
-    if engine_name=="same":
-        engine_path=os.path.join(engine_path_base,onnx_model_name+".engine")
-    else:
-        engine_name=onnx_model_name+"_"+engine_name
-        engine_path=os.path.join(engine_path_base,engine_name+".engine")
-    print("engine path is:",engine_path)
+        #get the size of the buffer
+        buffer_size=len(buffer.getvalue())/1024 #in KB
+        print("exported_image_size in buffer form is:",buffer_size,"KB")
 
-    #loading or building the engine
-    start=time.time()
-    Engine=Build_engine(onnx_path,engine_path,input_shape)
+        return buffer_size,buffer
 
-    #check if the engine exists on the path
-    if os.path.exists(engine_path):
-        engine=Engine.load_engine()
-        print("Engine is loaded from the disc")
-    else:
-        print("Engine not found at the path, Building the engine")
+    def main(self):
+        
+        desired_size=200 # in KB
+        quality=20  #this is the AVIF encoder quality parameter
+        
+        #preprocess the image
+        image_,image_size=self.preprocess_gray_2(self.image_buffer)
+        print("image size:",image_size,"KB")
+
+        #run inference on the model 
         start=time.time()
-        engine=Engine.build_engine()
+        output_data=self.infer(image_) #inference step
         end=time.time()
-        print("engine is built, Time:",round(end-start,2),"seconds")
-        Engine.save_engine(engine)
-        print("Engine is exported to the disc")
-    print("====================Engine done=============================")
-    end=time.time()
-    print("Engine time:",round(end-start,2),"seconds")
-
-    #Now running the inference on the whole dataset
-
-    #instantiating the TensorRTInference class
-    trt_inference=TensorRTInference(engine_path,dataset_path,export_data_path,input_shape,output_shape,gray) #output_path is the image output path
-
-    q_cr=trt_inference.inference_over_dataset()
-    print("quality cr list:",q_cr)
+        
+        #export the image 
+        img_size,buffer_image=self.postprocess_gray_final(output_data,quality)
+        print("Exported image_size is:",img_size,"KB")
+        
+        return buffer_image
 
 
+if __name__=="__main__":
 
-    if __name__=="__main__":
-
-    #onnx_model_name="bmshj_halfUHD_ssim_6" #write the name without the extension
-    #onnx_model_name="bmshj_halfUHD_ssim_4"
-    #onnx_model_name="bmshj_4_UHD_org"
     onnx_model_name="bmshj_4_UHD"
-    #onnx_model_name="bmshj4_UHD_gray_org_version"
-    #onnx_model_name="bmshj_4_UHD_org"
-    print("getting the information about the onnx model")
-
-
-    engine_name="JETSON"   #if some optimization parameter is added then can write here #it will append this name to the onnx_model name while exporting
-    #input_shape=[3,1232,1640]
-    #output_shape=[3,1232,1648]  #take care of the 8 pixels added by the model in the output shape
-    #input_shape=[3,720,1280]
-    #output_shape=[3,720,1280]
-    #input_shape=[3,2464,3280]
-    #output_shape=[3,2464,3280]
     input_shape=[3,2464,3280]
     output_shape=[3,2464,3280]
-    gray=False
+    
+    engine_path=r"/home/swapnil09/DL_comp_final_09_24/tensorrt_scripts/engine_models/bmshj_4_UHD.engine"
 
-    onnx_path_base=r"/home/swapnil09/DL_comp_final_09_24/onnx_scripts/onnx_export/onnx_models"
-    onnx_path_complete=os.path.join(onnx_path_base,onnx_model_name+".onnx")
-
-    onnx_model=onnx.load(onnx_path_complete)
-
-
-    engine_path_base=r"/home/swapnil09/DL_comp_final_09_24/tensorrt_scripts/engine_models"
-    #dataset_path=r"/home/swapnil09/DL_comp_final_09_24/Dataset_50/dataset_50_gray"
-    dataset_path=r"/home/swapnil09/DL_comp_final_09_24/Dataset_50/Dataset_50"
-    export_data_path=r"/home/swapnil09/DL_comp_final_09_24/tensorrt_scripts_gray/trt_infer_output"
+    Inference_object=Inference(engine_path,input_shape,output_shape,image_buffer)
+    Inference_object.main()

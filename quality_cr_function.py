@@ -6,8 +6,9 @@ from sklearn.preprocessing import PolynomialFeatures
 from sklearn.pipeline import make_pipeline
 import joblib  # For saving and loading the model
 import io
+import pillow_avif
 
-MODEL_PATH = "quality_compression_model.pkl"
+MODEL_PATH = "quality_compression_model_avif.pkl"
 
 def calculate_compression_ratio(image,image_size, quality):
     """
@@ -17,7 +18,7 @@ def calculate_compression_ratio(image,image_size, quality):
     #image=Image.open(image_path).convert("RGB")
     # Compress image to a buffer
     buffer = io.BytesIO()
-    image.save(buffer, format="JPEG", quality=quality)
+    image.save(buffer, format="AVIF", quality=quality)
     
     # Calculate original and compressed size
     original_size = image_size#os.path.getsize(image_path)
@@ -27,7 +28,7 @@ def calculate_compression_ratio(image,image_size, quality):
     # Calculate compression ratio
     compression_ratio = original_size / compressed_size
     buffer.close()
-    return compression_ratio, original_size
+    return compression_ratio, original_size,compressed_size
 
 def build_quality_compression_model(dataset_path):
     """
@@ -37,7 +38,7 @@ def build_quality_compression_model(dataset_path):
     print("starting the model fitting")
     # Load and process each image
     for image_file in sorted(os.listdir(dataset_path)):
-        if image_file.lower().endswith((".jpg", ".jpeg", ".png", ".webp")):
+        if image_file.lower().endswith((".jpg", ".jpeg", ".png", ".webp",".avif")):
             image_path = os.path.join(dataset_path, image_file)
             #print("image path:",image_path)
             image = Image.open(image_path).convert("RGB")
@@ -45,9 +46,9 @@ def build_quality_compression_model(dataset_path):
 
             # Test quality settings and collect compression ratios and input sizes
             for quality in range(1, 100, 1):
-                compression_ratio, input_size = calculate_compression_ratio(image,image_size, quality)
+                compression_ratio, input_size,compressed_size = calculate_compression_ratio(image,image_size, quality)
                 cr_quality_pairs.append([input_size, compression_ratio, quality])
-                print("quality:",quality)
+                print("input_size:",input_size,"compressed_size:",compressed_size,"compression_ratio:",compression_ratio,"quality:",quality)
                 #print("cr:",compression_ratio)
         print("done for the image :",image_file)
 
