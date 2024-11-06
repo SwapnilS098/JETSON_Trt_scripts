@@ -22,6 +22,7 @@ from PIL import Image
 import time
 import os
 import pillow_avif
+import io
 
 
 class Inference:
@@ -32,7 +33,7 @@ class Inference:
         self.context=self.engine.create_execution_context()
         self.input_shape=input_shape
         self.output_shape=output_shape
-        self.input_buffer_image=image_buffer
+        self.image_buffer=image_buffer
 
         #allocate Buffers
         self.inputs,self.outputs,self.bindings,self.stream=self.allocate_buffers(self.engine)
@@ -111,9 +112,9 @@ class Inference:
 
         height,width=self.input_shape[1],self.input_shape[2]
 
-        image_size_kb=len(image_buffer)/1024 #get the image size in KB
+        image_size_kb=image_buffer.getbuffer().nbytes/1024 #len(image_buffer)/1024 #get the image size in KB
 
-        image = Image.open(io.BytesIO(image_buffer)).resize((width, height)).convert("L")
+        image = Image.open(image_buffer).resize((width, height)).convert("L")
         image = np.array(image) / 255.0
 
         # Stack the grayscale image into the first channel of a blank 3D array
@@ -135,7 +136,7 @@ class Inference:
 
 
             """
-
+        print("output shape is:",self.output_shape)
         height=self.output_shape[1]
         width=self.output_shape[2]
 
@@ -189,8 +190,7 @@ if __name__=="__main__":
     onnx_model_name="bmshj_4_UHD"
     input_shape=[3,2464,3280]
     output_shape=[3,2464,3280]
-    
     engine_path=r"/home/swapnil09/DL_comp_final_09_24/tensorrt_scripts/engine_models/bmshj_4_UHD.engine"
-
+    
     Inference_object=Inference(engine_path,input_shape,output_shape,image_buffer)
     Inference_object.main()
