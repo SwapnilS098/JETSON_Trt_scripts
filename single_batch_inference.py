@@ -75,7 +75,7 @@ class Inference:
     def infer(self, input_data):
         input_data = input_data.astype(np.float32)  # Ensure the data type matches
         expected_shape = self.inputs[0].host.shape
-        print(f"Input data shape: {input_data.shape}, Expected shape: {expected_shape}")
+        #print(f"Input data shape: {input_data.shape}, Expected shape: {expected_shape}")
 
         # Check if the shape of input_data matches expected shape
         if input_data.size != np.prod(expected_shape):
@@ -136,7 +136,7 @@ class Inference:
 
 
             """
-        print("output shape is:",self.output_shape)
+        #print("output shape is:",self.output_shape)
         height=self.output_shape[1]
         width=self.output_shape[2]
 
@@ -156,7 +156,7 @@ class Inference:
         #save the image to the memory buffer
 
         buffer=io.BytesIO()
-        image.save(buffer,format="AVIF",quality=quality)
+        image.save(buffer,format="JPEG",quality=quality)
 
         #get the size of the buffer
         buffer_size=len(buffer.getvalue())/1024 #in KB
@@ -169,18 +169,32 @@ class Inference:
         desired_size=200 # in KB
         quality=20  #this is the AVIF encoder quality parameter
         
+        print("Now starting the single_batch_inference function\n")
+
+
+
         #preprocess the image
+        start=time.time()
         image_,image_size=self.preprocess_gray_2(self.image_buffer)
+        end=time.time()
+        print("image preprocessing time:",round(end-start,2),"seconds")
+
         print("image size:",image_size,"KB")
 
         #run inference on the model 
         start=time.time()
         output_data=self.infer(image_) #inference step
         end=time.time()
-        
+
+        print("model inference time:",round(end-start,3),"seconds")
+
+
         #export the image 
+        start=time.time()
         img_size,buffer_image=self.postprocess_gray_final(output_data,quality)
-        print("Exported image_size is:",img_size,"KB")
+        end=time.time()
+        print("time to export to the buffer:",round(end-start,4),"seconds")
+        #print("Exported image_size is:",img_size,"KB")
         
         return buffer_image
 
