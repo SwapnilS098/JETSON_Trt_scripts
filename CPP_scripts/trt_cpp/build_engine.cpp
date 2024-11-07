@@ -38,11 +38,12 @@ ICudaEngine* buildEngineFromOnnx(const std::string& onnxFile, IBuilder* builder,
 
     // Min, Opt, Max dimensions for dynamic input (for example, dynamic batch size, fixed 3x1232x1640)
     profile->setDimensions(inputTensorName, OptProfileSelector::kMIN, Dims4{1, 3, 2464, 3280}); // Min batch size = 1
-    profile->setDimensions(inputTensorName, OptProfileSelector::kOPT, Dims4{4, 3, 2464, 3280}); // Optimal batch size = 4
-    profile->setDimensions(inputTensorName, OptProfileSelector::kMAX, Dims4{8, 3, 2464, 3280}); // Max batch size = 8
+    profile->setDimensions(inputTensorName, OptProfileSelector::kOPT, Dims4{1, 3, 2464, 3280}); // Optimal batch size = 4
+    profile->setDimensions(inputTensorName, OptProfileSelector::kMAX, Dims4{1, 3, 2464, 3280}); // Max batch size = 8
 
     // Add optimization profile to the builder config
     config->addOptimizationProfile(profile);
+    config->setFlag(BuilderFlag::kGPU_FALLBACK);
 
     // Set the workspace size (can be adjusted based on available GPU memory)
     config->setMaxWorkspaceSize(1 << 28); // 256 MB (adjust as needed)

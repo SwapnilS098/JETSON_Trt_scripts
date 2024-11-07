@@ -60,7 +60,7 @@ void doInference(nvinfer1::ICudaEngine* engine, const void* inputData, void* out
 }
 
 int main() {
-    std::string enginePath = "/home/swapnil09/DL_comp_final_09_24/tensorrt_scripts/engine_models/bmshj_4_UHD_JETSON.engine";
+    std::string enginePath = "/home/swapnil09/DL_comp_final_09_24/tensorrt_scripts_gray/tensorRT_scripts/CPP_scripts/trt_cpp/bmshj_4_UHD_JETSON_CPP.engine";
     class Logger : public nvinfer1::ILogger {
     public:
         void log(nvinfer1::ILogger::Severity severity, const char* msg) noexcept override {
