@@ -89,9 +89,10 @@ if __name__=="__main__":
     #onnx_model_name="bmshj_halfUHD_ssim_6" #write the name without the extension
     #onnx_model_name="bmshj_halfUHD_ssim_4"
     #onnx_model_name="bmshj_4_UHD_org"
-    onnx_model_name="bmshj_4_UHD"
+    #onnx_model_name="bmshj_4_UHD"
     #onnx_model_name="bmshj4_UHD_gray_org_version"
     #onnx_model_name="bmshj_4_UHD_org"
+    onnx_model_name="bmshj_8_custom_1"
     print("getting the information about the onnx model")
     
 
@@ -100,10 +101,12 @@ if __name__=="__main__":
     #output_shape=[3,1232,1648]  #take care of the 8 pixels added by the model in the output shape
     #input_shape=[3,720,1280]
     #output_shape=[3,720,1280]
+    input_shape=[3,540,960]
+    output_shape=[3,544,960]
     #input_shape=[3,2464,3280]
     #output_shape=[3,2464,3280]
-    input_shape=[3,2464,3280]
-    output_shape=[3,2464,3280]
+    #input_shape=[3,2464,3280]
+    #output_shape=[3,2464,3280]
     gray=False
     
     onnx_path_base=r"/home/swapnil09/DL_comp_final_09_24/onnx_scripts/onnx_export/onnx_models"
@@ -132,7 +135,7 @@ if __name__=="__main__":
     #    print(f"Name: {node.name}, OpType: {node.op_type}")
     
 
-    engine_path_base=r"/home/swapnil09/DL_comp_final_09_24/tensorrt_scripts/engine_models"
+    engine_path_base=r"/home/swapnil09/DL_comp_final_09_24/tensorrt_scripts_gray/engine_models"
     #dataset_path=r"/home/swapnil09/DL_comp_final_09_24/Dataset_50/dataset_50_gray"
     dataset_path=r"/home/swapnil09/DL_comp_final_09_24/Dataset_50/Dataset_50"
     export_data_path=r"/home/swapnil09/DL_comp_final_09_24/tensorrt_scripts_gray/trt_infer_output"

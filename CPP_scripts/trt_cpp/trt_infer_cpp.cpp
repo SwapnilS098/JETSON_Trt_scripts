@@ -4,9 +4,22 @@
 #include <cassert>
 #include <NvInfer.h>
 #include <cuda_runtime_api.h>
+#include <memory>
+#define CUDA_CHECK(call)                                                      \
+    {                                                                         \
+        cudaError_t err = call;                                               \
+        if (err != cudaSuccess) {                                             \
+            std::cerr << "CUDA error: " << cudaGetErrorString(err)            \
+                      << " at line " << __LINE__ << " in file " << __FILE__;   \
+            exit(EXIT_FAILURE);                                               \
+        }                                                                     \
+    }
+
+
 
 nvinfer1::ICudaEngine* loadEngine(const std::string& engineFilePath, nvinfer1::ILogger& logger) {
     std::ifstream engineFile(engineFilePath, std::ios::binary);
+    std::cout<<"Load Engine function starting"<<std::endl;
     if (!engineFile.is_open()) {
         std::cerr << "Error opening engine file: " << engineFilePath << std::endl;
         return nullptr;
@@ -25,38 +38,56 @@ nvinfer1::ICudaEngine* loadEngine(const std::string& engineFilePath, nvinfer1::I
         std::cerr << "Error creating TensorRT runtime" << std::endl;
         return nullptr;
     }
-
-    // Deserialize engine (still using deprecated API for now, consider updating to V2 in the future)
-    return runtime->deserializeCudaEngine(engineData.data(), engineSize, nullptr);
+	std::cout<<"Load engine function completed runnning:"<<std::endl;
+    return runtime->deserializeCudaEngine(engineData.data(), engineSize);
 }
 
 void doInference(nvinfer1::ICudaEngine* engine, const void* inputData, void* outputData, int batchSize) {
     assert(engine != nullptr);
+    std::cout << "doInference function is starting..." << std::endl;
 
-    nvinfer1::IExecutionContext* context = engine->createExecutionContext();
+    //std::unique_ptr<nvinfer1::IExecutionContext> context(engine->createExecutionContext());
+    std::unique_ptr>context(engine->createExecutionContext());
     assert(context != nullptr);
 
-    // Get input and output sizes
-    size_t inputSize = engine->getBindingDimensions(0).d[0] * engine->getBindingDimensions(0).d[1] *
-                        engine->getBindingDimensions(0).d[2] * engine->getBindingDimensions(0).d[3];
-    size_t outputSize = engine->getBindingDimensions(1).d[0] * engine->getBindingDimensions(1).d[1] *
-                         engine->getBindingDimensions(1).d[2] * engine->getBindingDimensions(1).d[3];
+    // Get input and output binding dimensions
+    nvinfer1::Dims inputDims = context->getBindingDimensions(0);
+    nvinfer1::Dims outputDims = context->getBindingDimensions(1);
 
-    // Use cudaMallocManaged with void** cast to avoid invalid conversion errors
-    float* d_input;
-    float* d_output;
-    cudaMallocManaged((void**)&d_input, inputSize * sizeof(float));   // Cast to void**
-    cudaMallocManaged((void**)&d_output, outputSize * sizeof(float)); // Cast to void**
+    size_t inputSize = batchSize;
+    for (int i = 0; i < inputDims.nbDims; i++) inputSize *= inputDims.d[i];
+    size_t outputSize = batchSize;
+    for (int i = 0; i < outputDims.nbDims; i++) outputSize *= outputDims.d[i];
 
-    cudaMemcpy(d_input, inputData, inputSize * sizeof(float), cudaMemcpyHostToDevice);
+    std::cout << "Input size: " << inputSize << ", Output size: " << outputSize << std::endl;
+
+    float* d_input = nullptr;
+    float* d_output = nullptr;
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_input), inputSize * sizeof(float)));
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_output), outputSize * sizeof(float)));
+
+    // Copy input data to device
+    CUDA_CHECK(cudaMemcpy(d_input, inputData, inputSize * sizeof(float), cudaMemcpyHostToDevice));
 
     void* buffers[2] = {d_input, d_output};
-    context->executeV2(buffers);
+    cudaStream_t stream;
+    CUDA_CHECK(cudaStreamCreate(&stream));
 
-    cudaMemcpy(outputData, d_output, outputSize * sizeof(float), cudaMemcpyDeviceToHost);
+    // Run inference
+    bool status = context->enqueueV2(buffers, stream, nullptr);
+    if (!status) {
+        std::cerr << "Error: Enqueue failed." << std::endl;
+        return;
+    }
 
-    cudaFree(d_input);
-    cudaFree(d_output);
+    // Copy output data from device to host
+    CUDA_CHECK(cudaMemcpy(outputData, d_output, outputSize * sizeof(float), cudaMemcpyDeviceToHost));
+
+    CUDA_CHECK(cudaFree(d_input));
+    CUDA_CHECK(cudaFree(d_output));
+    CUDA_CHECK(cudaStreamDestroy(stream));
+
+    std::cout << "doInference function completed." << std::endl;
 }
 
 int main() {
@@ -76,12 +107,13 @@ int main() {
         return -1;
     }
 
-    // Assuming inputData and outputData have been initialized correctly
+    // Initialize input and output data (ensure dimensions are correct)
     std::vector<float> inputData(1 * 3 * 2464 * 3280);
     std::vector<float> outputData(1 * 1000);
 
     doInference(engine, inputData.data(), outputData.data(), 1);
 
+    engine->destroy();
     return 0;
 }
 
